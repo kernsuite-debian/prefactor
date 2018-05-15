@@ -3,14 +3,14 @@
 Script to sort a list of MSs into frequency-bands, and compute additional values needed for initsubtract
 """
 import pyrap.tables as pt
-import sys, os
+import os
 import numpy as np
 from lofarpipe.support.data_map import DataMap
 from lofarpipe.support.data_map import DataProduct
 
 class Band(object):
     """
-    The Band object contains parameters needed for each band 
+    The Band object contains parameters needed for each band
     """
     def __init__(self, MSfiles):
         self.files = MSfiles
@@ -30,7 +30,7 @@ class Band(object):
         ant.close()
 
 
-     
+
     def get_image_sizes(self, cellsize_highres_deg=None, cellsize_lowres_deg=None,
                         fieldsize_highres=2.5, fieldsize_lowres=6.5):
         """
@@ -164,7 +164,7 @@ class Band(object):
             if (self.nchan % step) == 0:
                 tmp_divisors.append(step)
         freq_divisors = np.array(tmp_divisors)
-  
+
         # For initsubtract, average to 0.5 MHz per channel and 20 sec per time
         # slot. Since each band is imaged separately and the smearing and image
         # sizes both scale linearly with frequency, a single frequency and time
@@ -175,9 +175,36 @@ class Band(object):
 
         return (initsubtract_freqstep, initsubtract_timestep)
 
+    def nwavelengths(self, cellsize_highres_deg, cellsize_lowres_deg, initsubtract_timestep):
+        int_time_sec = self.timestep_sec * initsubtract_timestep
+        max_baseline_in_nwavelenghts_h = 1.0/(cellsize_highres_deg*3.0*np.pi/180.0)
+        max_baseline_in_nwavelenghts_l = 1.0/(cellsize_lowres_deg*3.0*np.pi/180.0)
+        self.nwavelengths_high	=	max_baseline_in_nwavelenghts_h*2.0*np.pi*int_time_sec/(24.0*60.0*60.0)/2
+        self.nwavelengths_low	=	max_baseline_in_nwavelenghts_l*2.0*np.pi*int_time_sec/(24.0*60.0*60.0)/2
+        return (self.nwavelengths_high, self.nwavelengths_low)
+
+
+def input2bool(invar):
+    if invar is None:
+        return None
+    if isinstance(invar, bool):
+        return invar
+    elif isinstance(invar, str):
+        if invar.upper() == 'TRUE' or invar == '1':
+            return True
+        elif invar.upper() == 'FALSE' or invar == '0':
+            return False
+        else:
+            raise ValueError('input2bool: Cannot convert string "'+invar+'" to boolean!')
+    elif isinstance(invar, int) or isinstance(invar, float):
+        return bool(invar)
+    else:
+        raise TypeError('input2bool: Unsupported data type:'+str(type(invar)))
+
 
 def main(ms_input, outmapname=None, mapfile_dir=None, cellsize_highres_deg=0.00208, cellsize_lowres_deg=0.00694,
-         fieldsize_highres=2.5, fieldsize_lowres=6.5, image_padding=1., y_axis_stretch=1.):
+         fieldsize_highres=2.5, fieldsize_lowres=6.5, image_padding=1., y_axis_stretch=1.,
+         calc_y_axis_stretch=False, apply_y_axis_stretch_highres=True, apply_y_axis_stretch_lowres=True):
     """
     Check a list of MS files for missing frequencies
 
@@ -200,7 +227,14 @@ def main(ms_input, outmapname=None, mapfile_dir=None, cellsize_highres_deg=0.002
     image_padding : float, optional
         How much padding shall we add to the padded image sizes.
     y_axis_stretch : float, optional
-        How much shall the y-axis be stretched or compressed. 
+        How much shall the y-axis be stretched or compressed.
+    calc_y_axis_stretch : bool, optional
+        Adjust the image sizes returned by this script for the mean elevation.
+        If True, the value of y_axis_stretch above is ignored
+    apply_y_axis_stretch_highres : bool, optional
+        Apply the y-axis stretch to the high-res image sizes
+    apply_y_axis_stretch_lowres : bool, optional
+        Apply the y-axis stretch to the low-res image sizes
 
     Returns
     -------
@@ -222,7 +256,7 @@ def main(ms_input, outmapname=None, mapfile_dir=None, cellsize_highres_deg=0.002
                     for f in fname.strip('[]').split(','):
                         ms_list.append(f.strip(' \'\"'))
                 else:
-                    ms_list.append(fname.strip(' \'\"'))  
+                    ms_list.append(fname.strip(' \'\"'))
     elif type(ms_input) is list:
         ms_list = [str(f).strip(' \'\"') for f in ms_input]
     else:
@@ -234,6 +268,9 @@ def main(ms_input, outmapname=None, mapfile_dir=None, cellsize_highres_deg=0.002
     fieldsize_lowres = float(fieldsize_lowres)
     image_padding = float(image_padding)
     y_axis_stretch = float(y_axis_stretch)
+    calc_y_axis_stretch = input2bool(calc_y_axis_stretch)
+    apply_y_axis_stretch_highres = input2bool(apply_y_axis_stretch_highres)
+    apply_y_axis_stretch_lowres = input2bool(apply_y_axis_stretch_lowres)
 
     msdict = {}
     for ms in ms_list:
@@ -257,7 +294,7 @@ def main(ms_input, outmapname=None, mapfile_dir=None, cellsize_highres_deg=0.002
     high_paddedsize_map = DataMap([])
     low_paddedsize_map = DataMap([])
     numfiles = 0
-    for band in bands:
+    for i, band in enumerate(bands):
         print "InitSubtract_sort_and_compute.py: Working on Band:",band.name
         group_map.append(MultiDataProduct('localhost', band.files, False))
         numfiles += len(band.files)
@@ -265,26 +302,53 @@ def main(ms_input, outmapname=None, mapfile_dir=None, cellsize_highres_deg=0.002
             file_single_map.append(DataProduct('localhost', filename, False))
         (imsize_high_res, imsize_low_res) = band.get_image_sizes(cellsize_highres_deg, cellsize_lowres_deg,
                                                                  fieldsize_highres, fieldsize_lowres)
+
+        # Calculate y_axis_stretch if desired
+        if calc_y_axis_stretch:
+            if i == 0:
+                y_axis_stretch = 1.0 / np.sin(band.mean_el_rad)
+                print "InitSubtract_sort_and_compute.py: Using y-axis stretch of:",y_axis_stretch
+
+        # Adjust sizes so that we get the correct ones below
+        if apply_y_axis_stretch_highres:
+            imsize_high_res /= y_axis_stretch
+        if apply_y_axis_stretch_lowres:
+            imsize_low_res /= y_axis_stretch
+
+        imsize_high_res = band.get_optimum_size(int(imsize_high_res))
         imsize_high_res_stretch = band.get_optimum_size(int(imsize_high_res*y_axis_stretch))
         high_size_map.append(DataProduct('localhost', str(imsize_high_res)+" "+str(imsize_high_res_stretch), False))
+
+        imsize_low_res = band.get_optimum_size(int(imsize_low_res))
         imsize_low_res_stretch = band.get_optimum_size(int(imsize_low_res*y_axis_stretch))
         low_size_map.append(DataProduct('localhost', str(imsize_low_res)+" "+str(imsize_low_res_stretch), False))
+
         imsize_high_pad = band.get_optimum_size(int(imsize_high_res*image_padding))
         imsize_high_pad_stretch = band.get_optimum_size(int(imsize_high_res*image_padding*y_axis_stretch))
         high_paddedsize_map.append(DataProduct('localhost', str(imsize_high_pad)+" "+str(imsize_high_pad_stretch), False))
+
         imsize_low_pad = band.get_optimum_size(int(imsize_low_res*image_padding))
         imsize_low_pad_stretch = band.get_optimum_size(int(imsize_low_res*image_padding*y_axis_stretch))
         low_paddedsize_map.append(DataProduct('localhost', str(imsize_low_pad)+" "+str(imsize_low_pad_stretch), False))
 
     print "InitSubtract_sort_and_compute.py: Computing averaging steps."
     (freqstep, timestep) = bands[0].get_averaging_steps()
+    (nwavelengths_high, nwavelengths_low) = bands[0].nwavelengths(cellsize_highres_deg,
+        cellsize_lowres_deg, timestep)
+
     # get mapfiles for freqstep and timestep with the length of single_map
     freqstep_map = DataMap([])
-    timestep_map = DataMap([]) 
+    timestep_map = DataMap([])
+    nwavelengths_high_map = DataMap([])
+    nwavelengths_low_map = DataMap([])
     for index in xrange(numfiles):
         freqstep_map.append(DataProduct('localhost', str(freqstep), False))
         timestep_map.append(DataProduct('localhost', str(timestep), False))
-    
+        freqstep_map.append(DataProduct('localhost', str(freqstep), False))
+        timestep_map.append(DataProduct('localhost', str(timestep), False))
+        nwavelengths_high_map.append(DataProduct('localhost', str(nwavelengths_high), False))
+        nwavelengths_low_map.append(DataProduct('localhost', str(nwavelengths_low), False))
+
     groupmapname = os.path.join(mapfile_dir, outmapname)
     group_map.save(groupmapname)
     file_single_mapname = os.path.join(mapfile_dir, outmapname+'_single')
@@ -301,10 +365,16 @@ def main(ms_input, outmapname=None, mapfile_dir=None, cellsize_highres_deg=0.002
     freqstep_map.save(freqstepname)
     timestepname = os.path.join(mapfile_dir, outmapname+'_timestep')
     timestep_map.save(timestepname)
+    nwavelengths_high_name = os.path.join(mapfile_dir, outmapname+'_nwavelengths_high')
+    nwavelengths_high_map.save(nwavelengths_high_name)
+    nwavelengths_low_name = os.path.join(mapfile_dir, outmapname+'_nwavelengths_low')
+    nwavelengths_low_map.save(nwavelengths_low_name)
+
     result = {'groupmap': groupmapname, 'single_mapfile' : file_single_mapname,
               'high_size_mapfile' : high_sizename, 'low_size_mapfile' : low_sizename,
               'high_padsize_mapfile' : high_padsize_name, 'low_padsize_mapfile' : low_padsize_name,
-              'freqstep' : freqstepname, 'timestep' : timestepname}
+              'freqstep' : freqstepname, 'timestep' : timestepname, 'nwavelengths_high_mapfile': nwavelengths_high_name,
+              'nwavelengths_low_mapfile': nwavelengths_low_name}
     return result
 
 
@@ -322,7 +392,8 @@ class MultiDataProduct(DataProduct):
     def __repr__(self):
         """Represent an instance as a Python dict"""
         return (
-            "{{'host': '{0}', 'file': {1}, 'skip': {2}}}".format(self.host, self.file, str(self.skip))
+            "{{'host': '{0}', 'file': '{1}', 'skip': {2}}}".format(self.host,
+                '[{}]'.format(','.join(self.file)), str(self.skip))
         )
 
     def __str__(self):
@@ -366,6 +437,21 @@ class MultiDataMap(DataMap):
     Class representing a specialization of data-map, a collection of data
     products located on the same node, skippable as a set and individually
     """
+    def __init__(self, data=list(), iterator=iter):
+        super(MultiDataMap, self).__init__(data, iterator)
+
+    @classmethod
+    def load(cls, filename):
+        """Load a data map from file `filename`. Return a DataMap instance."""
+        with open(filename) as f:
+            datamap = eval(f.read())
+            for i, d in enumerate(datamap):
+                file_entry = d['file']
+                if file_entry.startswith('[') and file_entry.endswith(']'):
+                    file_list = [e.strip(' \'\"') for e in file_entry.strip('[]').split(',')]
+                    datamap[i] = {'host': d['host'], 'file': file_list, 'skip': d['skip']}
+            return cls(datamap)
+
     @DataMap.data.setter
     def data(self, data):
         if isinstance(data, DataMap):
@@ -393,6 +479,3 @@ class MultiDataMap(DataMap):
                 chunk = item.file[i:i+number]
                 mdplist.append(MultiDataProduct(item.host, chunk, item.skip))
         self._set_data(mdplist)
-
-
-
