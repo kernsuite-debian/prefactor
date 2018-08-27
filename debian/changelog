@@ -1,3 +1,10 @@
+prefactor (2.0.3-1kern2) bionic; urgency=medium
+
+  [ Gijs Molenaar ]
+  * add missing libcasa-derivedmscal2
+
+ -- KERN packaging <packaging@kernsuite.info>  Mon, 27 Aug 2018 20:17:26 +0200
+
 prefactor (2.0.3-1kern1) bionic; urgency=medium
 
   * New upstream version 2.0.3
