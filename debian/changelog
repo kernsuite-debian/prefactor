@@ -1,3 +1,10 @@
+prefactor (2.0.2-1kern3) xenial; urgency=medium
+
+  [ Gijs Molenaar ]
+  * [PATCH] Use taql + mscal instead of virtual columns
+
+ -- KERN packaging <packaging@kernsuite.info>  Fri, 28 Sep 2018 15:58:36 +0200
+
 prefactor (2.0.2-1kern2) xenial; urgency=medium
 
   * Accept multiple <MSPattern>
