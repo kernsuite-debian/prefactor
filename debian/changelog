@@ -1,3 +1,10 @@
+prefactor (2.0.3.1-1) bionic; urgency=medium
+
+  [ Gijs Molenaar ]
+  * New upstream version 2.0.3.1
+
+ -- KERN packaging <packaging@kernsuite.info>  Fri, 19 Oct 2018 11:49:14 +0200
+
 prefactor (2.0.3-1kern2) bionic; urgency=medium
 
   [ Gijs Molenaar ]
