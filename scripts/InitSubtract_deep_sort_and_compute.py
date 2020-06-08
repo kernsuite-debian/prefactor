@@ -2,7 +2,7 @@
 """
 Script to sort a list of MSs into frequency-bands, and compute additional values needed for initsubtract
 """
-import pyrap.tables as pt
+import casacore.tables as pt
 import sys, os
 import numpy as np
 from lofarpipe.support.data_map import DataMap
@@ -12,7 +12,7 @@ from argparse import RawTextHelpFormatter
 
 class Band(object):
     """
-    The Band object contains parameters needed for each band 
+    The Band object contains parameters needed for each band
     """
     def __init__(self, MSfiles):
         self.files = MSfiles
@@ -31,8 +31,6 @@ class Band(object):
         self.diam = float(ant.col('DISH_DIAMETER')[0])
         ant.close()
 
-
-     
     def get_image_sizes(self, cellsize_highres_deg=None, cellsize_lowres_deg=None,
                         fieldsize_highres=2.5, fieldsize_lowres=6.5):
         """
@@ -57,7 +55,7 @@ class Band(object):
         if cellsize_lowres_deg:
             self.cellsize_lowres_deg = cellsize_lowres_deg
         if not hasattr(self, 'mean_el_rad'):
-            for MS_id in xrange(self.numMS):
+            for MS_id in range(self.numMS):
                 # calculate mean elevation
                 tab = pt.table(self.files[MS_id], ack=False)
                 el_values = pt.taql("SELECT mscal.azel1()[1] AS el from "
@@ -116,7 +114,7 @@ class Band(object):
                          break
                      c += 1
                  factors.append(c)
-                 lastresult /= c
+                 lastresult = lastresult // c
             if (factors==[]): factors=[n]
             return  numpy.unique(factors).tolist() if douniq else factors
 
@@ -157,17 +155,13 @@ class Band(object):
             if (self.nchan % step) == 0:
                 tmp_divisors.append(step)
         freq_divisors = np.array(tmp_divisors)
-  
-        # For initsubtract, average to 0.5 MHz per channel and 20 sec per time
-        # slot. Since each band is imaged separately and the smearing and image
-        # sizes both scale linearly with frequency, a single frequency and time
-        # step is valid for all bands
-        initsubtract_freqstep = max(1, min(int(round(0.5 * 1e6 / self.chan_width_hz)), self.nchan))
+
+        # Average to 0.2 MHz per channel and 16 sec per time slot
+        initsubtract_freqstep = max(1, min(int(round(0.2 * 1e6 / self.chan_width_hz)), self.nchan))
         initsubtract_freqstep = freq_divisors[np.argmin(np.abs(freq_divisors-initsubtract_freqstep))]
-        initsubtract_timestep = max(1, int(round(20.0 / self.timestep_sec)))
+        initsubtract_timestep = max(1, int(round(16.0 / self.timestep_sec)))
 
         return (initsubtract_freqstep, initsubtract_timestep)
-        
 
     def get_nwavelengths(self, cellsize_deg, timestep_sec,):
         """
@@ -189,6 +183,7 @@ class Band(object):
         wsclean_nwavelengths_time = int(max_baseline * 2*np.pi * timestep_sec /
             (24 * 60 * 60) / 4)
         return wsclean_nwavelengths_time
+
 
 def main(ms_input, outmapname=None, mapfile_dir=None, cellsize_highres_deg=0.00208, cellsize_lowres_deg=0.00694,
          fieldsize_highres=2.5, fieldsize_lowres=6.5, image_padding=1., y_axis_stretch=1.):
@@ -214,7 +209,7 @@ def main(ms_input, outmapname=None, mapfile_dir=None, cellsize_highres_deg=0.002
     image_padding : float, optional
         How much padding shall we add to the padded image sizes.
     y_axis_stretch : float, optional
-        How much shall the y-axis be stretched or compressed. 
+        How much shall the y-axis be stretched or compressed.
 
     Returns
     -------
@@ -222,7 +217,7 @@ def main(ms_input, outmapname=None, mapfile_dir=None, cellsize_highres_deg=0.002
         Dict with the name of the generated mapfiles
 
     """
-    
+
     if not outmapname or not mapfile_dir:
         raise ValueError('sort_times_into_freqGroups: outmapname and mapfile_dir are needed!')
     if type(ms_input) is str:
@@ -237,7 +232,7 @@ def main(ms_input, outmapname=None, mapfile_dir=None, cellsize_highres_deg=0.002
                     for f in fname.strip('[]').split(','):
                         ms_list.append(f.strip(' \'\"'))
                 else:
-                    ms_list.append(fname.strip(' \'\"'))  
+                    ms_list.append(fname.strip(' \'\"'))
     elif type(ms_input) is list:
         ms_list = [str(f).strip(' \'\"') for f in ms_input]
     else:
@@ -262,11 +257,11 @@ def main(ms_input, outmapname=None, mapfile_dir=None, cellsize_highres_deg=0.002
             msdict[msfreq] = [ms]
     bands = []
     bandfreqs = []
-    print "InitSubtract_deep_sort_and_compute.py: Putting files into bands."
+    print("InitSubtract_deep_sort_and_compute.py: Putting files into bands.")
     for MSkey in msdict.keys():
         bands.append( Band(msdict[MSkey]) )
         bandfreqs.append( Band(msdict[MSkey]).freq )
-        
+
     ## min freq gives largest image size for deep image
     bandfreqs = np.array(bandfreqs)
     minfreq = np.min(bandfreqs)
@@ -276,7 +271,7 @@ def main(ms_input, outmapname=None, mapfile_dir=None, cellsize_highres_deg=0.002
     wsclean_channum = np.argsort(bandfreqs)
     bands = np.array(bands)
     bands = bands[wsclean_channum]
-        
+
     #minfreq = 1e9
     #for ib, band in enumerate(bands):
         #if band.freq < minfreq:
@@ -290,21 +285,23 @@ def main(ms_input, outmapname=None, mapfile_dir=None, cellsize_highres_deg=0.002
     high_paddedsize_map = DataMap([])
     low_paddedsize_map = DataMap([])
     numfiles = 0
-    nbands = len(bands)
+    nbands = np.int(len(bands)/10)
     if nbands > 8:
         nchansout_clean1 = np.int(nbands/4)
     elif nbands > 4:
         nchansout_clean1 = np.int(nbands/2)
     else:
         nchansout_clean1 = np.int(nbands)
-        
+    if nchansout_clean1 < 2:
+        nchansout_clean1 = 2
+
     (freqstep, timestep) = bands[0].get_averaging_steps()
     int_time_sec = bands[0].timestep_sec * timestep   # timestep_sec gets added to band object in get_averaging_steps()
     nwavelengths_high = bands[0].get_nwavelengths(cellsize_highres_deg, int_time_sec)
     nwavelengths_low = bands[0].get_nwavelengths(cellsize_lowres_deg, int_time_sec)
-    
+
+    print("InitSubtract_deep_sort_and_compute.py: analyzing data...")
     for band in bands:
-        print "InitSubtract_deep_sort_and_compute.py: Working on Band:",band.name
         group_map.append(MultiDataProduct('localhost', band.files, False))
         numfiles += len(band.files)
         for filename in band.files:
@@ -321,12 +318,8 @@ def main(ms_input, outmapname=None, mapfile_dir=None, cellsize_highres_deg=0.002
         imsize_low_pad = band.get_optimum_size(int(imsize_low_res*image_padding))
         imsize_low_pad_stretch = band.get_optimum_size(int(imsize_low_res*image_padding*y_axis_stretch))
         low_paddedsize_map.append(DataProduct('localhost', str(imsize_low_pad)+" "+str(imsize_low_pad_stretch), False))
-        
-        print band.freq/1e6, imsize_high_res, imsize_high_res_stretch, imsize_high_pad, imsize_high_pad_stretch, imsize_low_res, imsize_low_res_stretch, imsize_low_pad, imsize_low_pad_stretch, nwavelengths_high, nwavelengths_low
 
-        
-    
-        if  band.freq == minfreq:
+        if band.freq == minfreq:
             deep_imsize_high_res = imsize_high_res
             deep_imsize_high_res_stretch = imsize_high_res_stretch
             deep_imsize_high_pad = imsize_high_pad
@@ -335,36 +328,32 @@ def main(ms_input, outmapname=None, mapfile_dir=None, cellsize_highres_deg=0.002
             deep_imsize_low_res_stretch = imsize_low_res_stretch
             deep_imsize_low_pad = imsize_low_pad
             deep_imsize_low_pad_stretch = imsize_low_pad_stretch
-            
-            print '*', band.freq/1e6, imsize_high_res, imsize_high_res_stretch, imsize_high_pad, imsize_high_pad_stretch, imsize_low_res, imsize_low_res_stretch, imsize_low_pad, imsize_low_pad_stretch
-    
-    
+
     deep_high_size_map = DataMap([DataProduct('localhost', str(deep_imsize_high_res)+" "+str(deep_imsize_high_res_stretch), False)])
     deep_high_paddedsize_map = DataMap([DataProduct('localhost', str(deep_imsize_high_pad)+" "+str(deep_imsize_high_pad_stretch), False)])
     deep_low_size_map = DataMap([DataProduct('localhost', str(deep_imsize_low_res)+" "+str(deep_imsize_low_res_stretch), False)])
     deep_low_paddedsize_map = DataMap([DataProduct('localhost', str(deep_imsize_low_pad)+" "+str(deep_imsize_low_pad_stretch), False)])
     nbands_map = DataMap([DataProduct('localhost', str(nbands), False)])
     nchansout_clean1_map = DataMap([DataProduct('localhost', str(nchansout_clean1), False)])
-    print "InitSubtract_deep_sort_and_compute.py: Computing averaging steps."
-    
+
     # get mapfiles for freqstep and timestep with the length of single_map
     freqstep_map = DataMap([])
-    timestep_map = DataMap([]) 
+    timestep_map = DataMap([])
     nwavelengths_high_map        = DataMap([])
     nwavelengths_low_map         = DataMap([])
-    
-    
-    for index in xrange(numfiles):
-        freqstep_map.append(DataProduct('localhost', str(freqstep), False))
-        timestep_map.append(DataProduct('localhost', str(timestep), False))
+
+    for index in range(numfiles):
+        # set time and frequency averaging values (in sec and Hz)
+        freqstep_map.append(DataProduct('localhost', str(freqstep*bands[0].chan_width_hz), False))
+        timestep_map.append(DataProduct('localhost', str(timestep*bands[0].timestep_sec), False))
     nwavelengths_high_map.append(DataProduct('localhost', str(nwavelengths_high), False))
     nwavelengths_low_map.append(DataProduct('localhost', str(nwavelengths_low), False))
-    
+
     groupmapname = os.path.join(mapfile_dir, outmapname)
     group_map.save(groupmapname)
     file_single_mapname = os.path.join(mapfile_dir, outmapname+'_single')
     file_single_map.save(file_single_mapname)
-    
+
     high_sizename = os.path.join(mapfile_dir, outmapname+'_high_size')
     high_size_map.save(high_sizename)
     low_sizename = os.path.join(mapfile_dir, outmapname+'_low_size')
@@ -373,7 +362,7 @@ def main(ms_input, outmapname=None, mapfile_dir=None, cellsize_highres_deg=0.002
     high_paddedsize_map.save(high_padsize_name)
     low_padsize_name = os.path.join(mapfile_dir, outmapname+'_low_padded_size')
     low_paddedsize_map.save(low_padsize_name)
-    
+
     deep_high_sizename = os.path.join(mapfile_dir, outmapname+'_deep_high_size')
     deep_high_size_map.save(deep_high_sizename)
     deep_low_sizename = os.path.join(mapfile_dir, outmapname+'_deep_low_size')
@@ -382,12 +371,12 @@ def main(ms_input, outmapname=None, mapfile_dir=None, cellsize_highres_deg=0.002
     deep_high_paddedsize_map.save(deep_high_padsize_name)
     deep_low_padsize_name = os.path.join(mapfile_dir, outmapname+'_deep_low_padded_size')
     deep_low_paddedsize_map.save(deep_low_padsize_name)
-    
+
     nbands_mapname = os.path.join(mapfile_dir, outmapname+'_nbands')
     nbands_map.save(nbands_mapname)
     nchansout_clean1_mapname = os.path.join(mapfile_dir, outmapname+'_nchansout_clean1')
     nchansout_clean1_map.save(nchansout_clean1_mapname)
-    
+
     freqstepname = os.path.join(mapfile_dir, outmapname+'_freqstep')
     freqstep_map.save(freqstepname)
     timestepname = os.path.join(mapfile_dir, outmapname+'_timestep')
@@ -396,14 +385,14 @@ def main(ms_input, outmapname=None, mapfile_dir=None, cellsize_highres_deg=0.002
     nwavelengths_high_map.save(nwavelengths_high_name)
     nwavelengths_low_name = os.path.join(mapfile_dir, outmapname+'_nwavelengths_low')
     nwavelengths_low_map.save(nwavelengths_low_name)
-    
+
     result = {'groupmap': groupmapname, 'single_mapfile' : file_single_mapname,
               'high_size_mapfile' : high_sizename, 'low_size_mapfile' : low_sizename,
               'high_padsize_mapfile' : high_padsize_name, 'low_padsize_mapfile' : low_padsize_name,
               'deep_high_size_mapfile' : deep_high_sizename, 'deep_low_size_mapfile' : deep_low_sizename,
               'deep_high_padsize_mapfile' : deep_high_padsize_name, 'deep_low_padsize_mapfile' : deep_low_padsize_name,
               'nbands' : nbands_mapname, 'nchansout_clean1' : nchansout_clean1_mapname,
-              'freqstep' : freqstepname, 'timestep' : timestepname, 'nwavelengths_high_mapfile': nwavelengths_high_name, 
+              'freqstep' : freqstepname, 'timestep' : timestepname, 'nwavelengths_high_mapfile': nwavelengths_high_name,
               'nwavelengths_low_mapfile': nwavelengths_low_name}
     return result
 
@@ -443,13 +432,11 @@ class MultiDataProduct(DataProduct):
             raise DataProduct("No known method to set a filelist from %s" % str(file))
 
     def _from_dataproduct(self, prod):
-        print 'setting filelist from DataProduct'
         self.host = prod.host
         self.file = prod.file
         self.skip = prod.skip
 
     def _from_datamap(self, inmap):
-        print 'setting filelist from DataMap'
         filelist = {}
         for item in inmap:
             if not item.host in filelist:
@@ -489,29 +476,7 @@ class MultiDataMap(DataMap):
     def split_list(self, number):
         mdplist = []
         for item in self.data:
-            for i in xrange(0, len(item.file), number):
+            for i in range(0, len(item.file), number):
                 chunk = item.file[i:i+number]
                 mdplist.append(MultiDataProduct(item.host, chunk, item.skip))
         self._set_data(mdplist)
-
-
-
-#if __name__ == '__main__':
-    
-    #descriptiontext = "sort bands and get numbers for imaging\n"
-
-    #parser = argparse.ArgumentParser(description=descriptiontext, formatter_class=RawTextHelpFormatter)
-    #parser.add_argument('ms_input', help='name of the full skymodel')
-    #parser.add_argument('--mapfile_dir', help='mapfile_dir', type=str, default=None)
-    #parser.add_argument('--outmapname', help='outmapname', type=str, default=None)
-    #parser.add_argument('--cellsize_highres_deg', help='cellsize_highres_deg', type=np.float, default=0.00208)
-    #parser.add_argument('--cellsize_lowres_deg', help='cellsize_lowres_deg', type=np.float, default=0.00694)
-    #parser.add_argument('--fieldsize_highres', help='fieldsize_highres', type=np.float, default=2.5)
-    #parser.add_argument('--fieldsize_lowres', help='fieldsize_lowres', type=np.float, default=6.5)
-    #parser.add_argument('--image_padding', help='image_padding', type=np.float, default=1.)
-    #parser.add_argument('--y_axis_stretch', help='y_axis_stretch', type=np.float, default=1.)
-    #args = parser.parse_args()
-
-    
-    #main(args.ms_input, args.outmapname, args.mapfile_dir, np.float(args.cellsize_highres_deg), np.float(args.cellsize_lowres_deg),
-         #np.float(args.fieldsize_highres), np.float(args.fieldsize_lowres), np.float(args.image_padding), np.float(args.y_axis_stretch))
